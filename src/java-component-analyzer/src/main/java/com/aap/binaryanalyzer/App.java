@@ -1,52 +1,79 @@
 package com.aap.binaryanalyzer;
 
+import com.aap.binaryanalyzer.features.GhidraBinaryFeatureExtractor;
+import com.aap.binaryanalyzer.features.TreeSitterSourceFeatureExtractor;
 import com.aap.binaryanalyzer.model.BinaryFunction;
-import com.aap.binaryanalyzer.model.FeatureVector;
+import com.aap.binaryanalyzer.model.FunctionFeatureProfile;
 import com.aap.binaryanalyzer.model.SourceFile;
 import com.aap.binaryanalyzer.model.SourceFunction;
 import com.aap.binaryanalyzer.model.SourceProject;
-import com.aap.binaryanalyzer.model.StructuredFeatures;
 import com.aap.binaryanalyzer.pipeline.BinaryComponentAnalyzer;
 import com.aap.binaryanalyzer.pipeline.BinaryComponentAnalyzerBuilder;
+import com.aap.binaryanalyzer.util.Hashing;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 /**
- * Demonstrates the binary component analyzer using mock data. In real deployments the data would
- * be gathered from Tree-sitter and Ghidra integrations.
+ * Demonstrates the binary component analyzer by ingesting Tree-sitter derived source functions
+ * and matching them against a Ghidra feature export represented as JSON.
  */
 public final class App {
-    public static void main(String[] args) {
-        BinaryComponentAnalyzer analyzer = new BinaryComponentAnalyzerBuilder().build();
+    public static void main(String[] args) throws Exception {
+        TreeSitterSourceFeatureExtractor sourceExtractor = new TreeSitterSourceFeatureExtractor(512);
+        GhidraBinaryFeatureExtractor ghidraExtractor = new GhidraBinaryFeatureExtractor(512);
 
-        SourceFunction sourceFunction = new SourceFunction(
-                "function-1",
-                "project-1",
-                "compress_block",
-                "void compress_block(const char*, int)",
-                List.of("const char*", "int"),
-                new FeatureVector(new float[]{0.3f, 0.9f, 0.1f}),
-                new StructuredFeatures(Map.of("if", 2, "for", 1), Set.of("memcpy", "malloc"), Set.of("COMPRESS"))
-        );
-        SourceFile file = new SourceFile("src/compress.c", "hash", List.of(sourceFunction));
-        SourceProject project = new SourceProject("project-1", "libcompress", "1.0.0", Instant.now(), List.of(file));
-        analyzer.ingest(project);
+        String projectId = Hashing.sha256("libcompress");
+        String sourceCode = """
+                #include <string.h>\n\n"
+                + "static char buffer[1024];\n\n"
+                + "void compress_block(const char* input, int length) {\n"
+                + "    if (length <= 0) {\n"
+                + "        return;\n"
+                + "    }\n"
+                + "    memcpy(buffer, input, length);\n"
+                + "}\n";
+        List<SourceFunction> functions = sourceExtractor.extract(projectId, "compress.c", sourceCode);
+        if (functions.isEmpty()) {
+            System.err.println("Tree-sitter did not yield any functions for the demo project.");
+            return;
+        }
+        SourceFile file = new SourceFile("compress.c", Hashing.sha256(sourceCode), functions);
+        SourceProject project = new SourceProject(projectId, "libcompress", "1.0.0", Instant.now(), List.of(file));
 
-        BinaryFunction binaryFunction = new BinaryFunction(
-                "binary-1",
-                "sub_401000",
-                "/opt/app.bin",
-                0x401000,
-                new FeatureVector(new float[]{0.2f, 0.8f, 0.1f}),
-                new StructuredFeatures(Map.of("if", 2), Set.of("memcpy"), Set.of("COMPRESS"))
-        );
+        try (BinaryComponentAnalyzer analyzer = new BinaryComponentAnalyzerBuilder().build()) {
+            analyzer.ingest(project);
 
-        analyzer.analyze(List.of(binaryFunction)).forEach(result -> {
-            System.out.printf("Detected component %s %s with confidence %.2f and coverage %.2f%%%n",
-                    result.getProjectName(), result.getVersion(), result.getConfidence(), result.getCoverage() * 100);
-        });
+            Path tempJson = Files.createTempFile("binary-function", ".json");
+            try {
+                String ghidraDocument = """
+                        {
+                          "id": "binary-1",
+                          "disassembly": "push rbp; if (length <= 0) goto LAB_401020; memcpy(buffer,input,length);",
+                          "pcode": "...",
+                          "strings": ["buffer"],
+                          "calls": ["memcpy"],
+                          "controlFlow": {"if": 1}
+                        }
+                        """;
+                Files.writeString(tempJson, ghidraDocument);
+                FunctionFeatureProfile binaryProfile = ghidraExtractor.extract(tempJson, "binary-1");
+                BinaryFunction binaryFunction = new BinaryFunction(
+                        "binary-1",
+                        "FUN_401000",
+                        "demo.bin",
+                        0x401000L,
+                        binaryProfile.getLexicalVector(),
+                        binaryProfile.getStructuredFeatures());
+
+                analyzer.analyze(List.of(binaryFunction)).forEach(result ->
+                        System.out.printf("Detected component %s %s with confidence %.2f and coverage %.2f%%%n",
+                                result.getProjectName(), result.getVersion(), result.getConfidence(), result.getCoverage() * 100));
+            } finally {
+                Files.deleteIfExists(tempJson);
+            }
+        }
     }
 }

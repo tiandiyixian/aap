@@ -20,7 +20,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 /**
  * High-level facade orchestrating ingestion and matching workflow.
  */
-public class BinaryComponentAnalyzer {
+public class BinaryComponentAnalyzer implements AutoCloseable {
     private final KnowledgeBase knowledgeBase;
     private final VectorIndex vectorIndex;
     private final BinaryToSourceMatcher matcher;
@@ -45,7 +45,7 @@ public class BinaryComponentAnalyzer {
                         function.getId(),
                         function.getLexicalFeature(),
                         function.getStructuredFeatures());
-                knowledgeBase.addFunctionProfile(project.getId(), function, profile);
+                knowledgeBase.addFunctionProfile(project.getId(), file.getPath(), function, profile);
                 vectorIndex.add(function.getId(), function.getLexicalFeature());
             }
         }
@@ -62,5 +62,10 @@ public class BinaryComponentAnalyzer {
 
     public Collection<SourceProject> getIngestedProjects() {
         return ingestedProjects;
+    }
+
+    @Override
+    public void close() throws Exception {
+        knowledgeBase.close();
     }
 }

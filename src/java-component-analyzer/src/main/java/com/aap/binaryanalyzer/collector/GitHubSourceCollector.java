@@ -1,10 +1,9 @@
 package com.aap.binaryanalyzer.collector;
 
-import com.aap.binaryanalyzer.model.FeatureVector;
+import com.aap.binaryanalyzer.features.TreeSitterSourceFeatureExtractor;
 import com.aap.binaryanalyzer.model.SourceFile;
 import com.aap.binaryanalyzer.model.SourceFunction;
 import com.aap.binaryanalyzer.model.SourceProject;
-import com.aap.binaryanalyzer.model.StructuredFeatures;
 import com.aap.binaryanalyzer.util.Hashing;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,11 +34,16 @@ public class GitHubSourceCollector implements SourceCollector {
     private final Path rootDirectory;
     private final Predicate<Path> fileFilter;
     private final ExecutorService executorService;
+    private final TreeSitterSourceFeatureExtractor extractor;
 
-    public GitHubSourceCollector(Path rootDirectory, Predicate<Path> fileFilter, int workers) {
+    public GitHubSourceCollector(Path rootDirectory,
+                                 Predicate<Path> fileFilter,
+                                 TreeSitterSourceFeatureExtractor extractor,
+                                 int workers) {
         this.rootDirectory = rootDirectory;
         this.fileFilter = fileFilter;
         this.executorService = Executors.newFixedThreadPool(workers);
+        this.extractor = extractor;
     }
 
     @Override
@@ -74,6 +78,7 @@ public class GitHubSourceCollector implements SourceCollector {
             List<SourceFile> files = Files.walk(projectPath)
                     .filter(Files::isRegularFile)
                     .filter(fileFilter)
+                    .filter(extractor::supports)
                     .map(path -> parseFile(projectId, projectPath, path))
                     .filter(f -> !f.getFunctions().isEmpty())
                     .collect(Collectors.toList());
@@ -96,35 +101,17 @@ public class GitHubSourceCollector implements SourceCollector {
 
     private SourceFile parseFile(String projectId, Path projectPath, Path filePath) {
         try {
+            String relativePath = projectPath.relativize(filePath).toString();
             String content = Files.readString(filePath);
             String hash = Hashing.sha256(content);
-            // In this reference implementation we do not parse real functions. We place holders so that
-            // the knowledge base can be populated during tests.
-            SourceFunction placeholderFunction = new SourceFunction(
-                    Hashing.sha256(projectPath.relativize(filePath).toString()),
-                    projectId,
-                    filePath.getFileName().toString(),
-                    "void placeholder()",
-                    Collections.emptyList(),
-                    new SourceFunctionPlaceholderVector(),
-                    SourceFunctionPlaceholderVector.STRUCTURED
-            );
-            return new SourceFile(projectPath.relativize(filePath).toString(), hash, List.of(placeholderFunction));
+            List<SourceFunction> functions = extractor.extract(projectId, relativePath, content);
+            return new SourceFile(relativePath, hash, functions);
         } catch (IOException e) {
             LOGGER.warn("Failed to read file {}", filePath, e);
             return new SourceFile(projectPath.relativize(filePath).toString(), "", Collections.emptyList());
-        }
-    }
-
-    /**
-     * Simple placeholder vector to make the module self-contained without real Tree-sitter
-     * integration. In production, this would be replaced by the feature extractor output.
-     */
-    private static class SourceFunctionPlaceholderVector extends FeatureVector {
-        private static final StructuredFeatures STRUCTURED = new StructuredFeatures(Collections.emptyMap(), Collections.emptySet(), Collections.emptySet());
-
-        SourceFunctionPlaceholderVector() {
-            super(new float[]{1, 0, 0});
+        } catch (RuntimeException e) {
+            LOGGER.warn("Tree-sitter failed to parse {}", filePath, e);
+            return new SourceFile(projectPath.relativize(filePath).toString(), "", Collections.emptyList());
         }
     }
 }

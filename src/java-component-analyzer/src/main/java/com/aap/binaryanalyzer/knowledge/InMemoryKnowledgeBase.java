@@ -24,6 +24,7 @@ public class InMemoryKnowledgeBase implements KnowledgeBase {
     private final ConcurrentMap<String, SourceFunction> functions = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, FunctionFeatureProfile> profiles = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, String> functionToProject = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, String> functionToFile = new ConcurrentHashMap<>();
     private final Map<String, List<String>> tokenIndex = new HashMap<>();
     private final Map<String, List<String>> stringIndex = new HashMap<>();
 
@@ -33,9 +34,10 @@ public class InMemoryKnowledgeBase implements KnowledgeBase {
     }
 
     @Override
-    public synchronized void addFunctionProfile(String projectId, SourceFunction function, FunctionFeatureProfile profile) {
+    public synchronized void addFunctionProfile(String projectId, String filePath, SourceFunction function, FunctionFeatureProfile profile) {
         functions.put(function.getId(), function);
         functionToProject.put(function.getId(), projectId);
+        functionToFile.put(function.getId(), filePath);
         profiles.put(function.getId(), profile);
         indexTokens(profile, function.getId());
         indexStrings(function, function.getId());

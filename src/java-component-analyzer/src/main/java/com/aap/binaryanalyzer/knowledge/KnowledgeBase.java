@@ -11,11 +11,11 @@ import java.util.stream.Stream;
 /**
  * Abstraction that stores feature profiles and metadata about source functions.
  */
-public interface KnowledgeBase {
+public interface KnowledgeBase extends AutoCloseable {
 
     void addProject(SourceProject project);
 
-    void addFunctionProfile(String projectId, SourceFunction function, FunctionFeatureProfile profile);
+    void addFunctionProfile(String projectId, String filePath, SourceFunction function, FunctionFeatureProfile profile);
 
     Stream<SourceFunction> functionsByToken(String token);
 
@@ -32,4 +32,8 @@ public interface KnowledgeBase {
     Collection<SourceProject> projects();
 
     Optional<SourceProject> findProject(String projectId);
+
+    @Override
+    default void close() throws Exception {
+    }
 }
