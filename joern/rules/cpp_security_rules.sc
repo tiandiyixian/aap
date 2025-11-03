@@ -1,3 +1,7 @@
+package io.shiftleft.dataflowengine {
+  package object language extends io.joern.dataflowengineoss.language
+}
+
 import io.shiftleft.codepropertygraph.generated.Cpg
 import io.shiftleft.codepropertygraph.generated.nodes.{Call, Identifier, Literal, Method, Return, StoredNode}
 import io.joern.dataflowengineoss.language._
